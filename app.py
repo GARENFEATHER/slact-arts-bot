@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import os, re, redis
+import os, re, redis, requests
 
 # Project Data
 GET, POST = "GET", "POST"
@@ -120,54 +120,54 @@ def ArtsDel(listToDelete, user):
 
 # App run
 app = Flask(__name__)
-@app.route('/', methods=[GET, POST])
+@app.route('/', methods=[GET])
 def hello():
-	if request.method == POST:
-		postData = request.get_json()
-		if postData["type"] == "url_verification":
-			r.set(projectToken, postData["token"])
-			return jsonify({"challenge":postData["challenge"]})
-	else:
-		return "hello slack arts bot"
+	return "hello slack bot center by rhine"
 
-@app.route('/slack/app_mention', methods=[GET, POST])
+@app.route('/api/v1.0/arts', methods=[GET, POST])
 def mention():
 	if request.method == POST:
 		if not request.is_json:
 			return "not json error"
 		postData = request.get_json()
+		if postData["type"] == "url_verification":
+			r.set(projectToken, postData["token"])
+			return jsonify({"challenge":postData["challenge"]})
 		if postData["token"] != r.get(projectToken):
 			return jsonify({"error": "error token"})
 		actionUser = postData["event"]["user"]
 		if postData["event"]["type"] == "app_mention":
 			content = postData["event"]["text"]
 			if re.match(patternListAll, content):
-				result = "wait..."
+				text = "wait..."
 			elif re.match(patternListOne, content):
 				user = re.match(patternListOne, content).group(1)
-				result = ArtsList(queryType="user", query=user)
+				text = ArtsList(queryType="user", query=user)
 			elif re.match(patternLatest, content):
 				count = re.match(patternLatest, content).group(1)
-				result = ArtsList(queryType="latest", query=int(count))
+				text = ArtsList(queryType="latest", query=int(count))
 			elif re.match(patternAdd, content):
 				listToAdd = re.match(patternAdd, content).group(1).split(',')
 				listToAdd.remove('')
-				result = ArtsAdd(listToAdd, actionUser)
+				text = ArtsAdd(listToAdd, actionUser)
 			elif re.match(patternDel, content):
 				listToDel = re.match(patternDel, content).group(1).split(',')
 				listToDel.remove('')
-				result = ArtsDel(listToDel, actionUser)
+				text = ArtsDel(listToDel, actionUser)
 			elif re.match(patternSetTarget, content):
 				target = re.match(patternSetTarget, content).group(1)
-				result = TargetSet(actionUser, target)
+				text = TargetSet(actionUser, target)
 			elif re.match(patternGetTarget, content):
-				result = StatusGet(actionUser)
+				text = StatusGet(actionUser)
 			elif re.match(patternRandom, content):
 				count = re.match(patternRandom, content).group(1)
-				result = ArtsList(queryType="rand", query=int(count))
+				text = ArtsList(queryType="rand", query=int(count))
 			else:
-				result = "rule"
-		return jsonify({"result":result})
+				text = "rule"
+		message = jsonify({"channel":postData["event"]["channel"], "text":text, "token":postData["token"]})
+		headers = {"Content-type": "application/json", "Authorization":"Bearer "+postData["token"]}
+		requests.post(url="https://slack.com/api/chat.postMessage", headers = headers, json=message)
+		return message
 if __name__ == '__main__':
 	port = int(os.getenv("PORT"))
 	app.run(host='0.0.0.0', port=port)

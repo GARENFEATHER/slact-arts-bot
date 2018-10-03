@@ -1,6 +1,6 @@
 ---
 applications:
-- name: slack-arts
+- name: slack-bots
   instances: 1
   memory: 128MB
   buildpack: https://github.com/cloudfoundry/buildpack-python.git

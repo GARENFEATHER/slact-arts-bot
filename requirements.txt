@@ -1,3 +1,4 @@
 Flask==1.0.2
 Jinja2==2.10
 redis==2.10.6
+requests==2.6.0
