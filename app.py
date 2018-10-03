@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import requests, os, re
+import os, re, redis
 
 # Project Data
 GET, POST = "GET", "POST"
@@ -10,7 +10,7 @@ projectLatest = projectKey + "-latest"
 projectTotal = projectKey + "-total"
 patternListAll = "^<@.+> list all$"
 patternListOne = "^<@.+> list <@(.+)>$"
-patternLatest = "^<@.+> latest$"
+patternLatest = "^<@.+> latest ([1-9])$"
 patternAdd = "^<@.+> add (http[s]*://.+,)+$"
 patternDel = "^<@.+> delete (http[s]*://.+,)$"
 patternSetTarget = "^<@.+> set target ([0-9]+)$"
@@ -28,14 +28,13 @@ if not redisPort:
 if not redisPwd:
 	raise Exception("get redis password error")
 r = redis.StrictRedis(host=redisHost, port=redisPort, password = redisPwd, db=0)
-try:
-	test = "test-global"
-	r.set(test, "success")
-	mark = r.get(test)
-	if mark != "success":
-		raise Exception("set test-global failed")
-except Exception as e:
-	print("redis connection error:", e)
+
+# Test Connection
+test, testRes = "test-global", "success"
+r.set(test, testRes)
+mark = r.get(test)
+if mark != testRes:
+	raise Exception("set test-global failed," + testRes + "/" + str(type(mark)) + str(type(testRes)))
 
 # Process Method
 def ArtsList(queryType, query):
@@ -44,12 +43,12 @@ def ArtsList(queryType, query):
 		total = r.scard(projectTotal)
 		if total < query * 2:
 			query = total
-			respStr = "total added:" + total + "\n" + respStr
+			respStr = "total added:" + str(total) + "\n" + respStr
 		while len(totalGet) < query:
 			url = r.srandmember(projectTotal)
 			totalGet.add(url)# TODO: dead lock possible
 		for i in range(len(totalGet)):
-			respStr += string(i) + ": " + url + "\n"
+			respStr += str(i) + ": " + url + "\n"
 		return respStr
 	elif queryType == "latest":
 		latest = r.lrange(projectLatest, query * -1, -1)
@@ -58,13 +57,13 @@ def ArtsList(queryType, query):
 		else:
 			respStr = "latest added arts here:\n"
 			for i in range(len(latest)):
-				respStr += string(i) + ": " + latest[i] + "\n"
+				respStr += str(i) + ": " + latest[i] + "\n"
 			return respStr
 	elif queryType == "user":
 		userArts = r.smembers(projectKey + "-" + query)
 		if len(userArts) != 0:
 			respStr = "arts you've added:\n"
-			for arts in respStr:
+			for arts in userArts:
 				respStr += arts + "\n"
 			return respStr
 		else:
@@ -73,7 +72,7 @@ def ArtsList(queryType, query):
 def TargetSet(user, value):
 	result = r.set(projectKey + "-" + user + "-target", value)
 	if result:
-		return "target successfully set, new target:" + string(value)
+		return "target successfully set, new target:" + str(value)
 	else:
 		return "target set failed...sorry, please check again"
 
@@ -81,11 +80,11 @@ def StatusGet(user):
 	targetBefore = r.get(projectKey + "-" + user + "-target")
 	addedCount = r.scard(projectKey + "-" + user)
 	if not targetBefore:
-		return "no target now...let's set one!" + "\nyou've added:" + string(addedCount)
+		return "no target now...let's set one!" + "\nyou've added:" + str(addedCount)
 	else:
-		return "your target:" + string(targetBefore) + "\nyou've added:" + string(addedCount)
+		return "your target:" + str(targetBefore) + "\nyou've added:" + str(addedCount)
 
-def ArtsAdd(listToAdd):
+def ArtsAdd(listToAdd, user):
 	totalAdded = 0
 	for url in listToAdd:
 		count = r.sadd(projectTotal, url)
@@ -101,9 +100,9 @@ def ArtsAdd(listToAdd):
 	elif totalAdded == 1:
 		return "congratulations! 1 post has been added!"
 	else:
-		return "congratulations! " + string(totalAdded) + " posts have been added!"
+		return "congratulations! " + str(totalAdded) + " posts have been added!"
 
-def ArtsDel(listToDelete):
+def ArtsDel(listToDelete, user):
 	totalDeleted = 0
 	for url in listToDelete:
 		count = r.srem(projectTotal, url)
@@ -116,14 +115,18 @@ def ArtsDel(listToDelete):
 	elif totalDeleted == 1:
 		return "congratulations! 1 post has been deleted!"
 	else:
-		return "congratulations! " + string(totalDeleted) + " posts have been deleted!"
+		return "congratulations! " + str(totalDeleted) + " posts have been deleted!"
 
 # App run
 app = Flask(__name__)
+@app.route('/', methods=[GET, POST])
+def hello():
+	return "hello slack arts bot"
+
 @app.route('/slack/app_mention', methods=[GET, POST])
 def mention():
 	if request.method == POST:
-		if not request.is_json():
+		if not request.is_json:
 			return "not json error"
 		postData = request.get_json()
 		actionUser = postData["event"]["user"]
@@ -132,28 +135,30 @@ def mention():
 			if re.match(patternListAll, content):
 				result = "wait..."
 			elif re.match(patternListOne, content):
-				user = re.match(patternAdd, content).group(1)
+				user = re.match(patternListOne, content).group(1)
 				result = ArtsList(queryType="user", query=user)
 			elif re.match(patternLatest, content):
-				count = re.match(patternAdd, content).group(1)
-				result = ArtsList(queryType="latest", int(count))
+				count = re.match(patternLatest, content).group(1)
+				result = ArtsList(queryType="latest", query=int(count))
 			elif re.match(patternAdd, content):
 				listToAdd = re.match(patternAdd, content).group(1).split(',')
 				listToAdd.remove('')
-				result = ArtsAdd(listToAdd)
+				result = ArtsAdd(listToAdd, actionUser)
 			elif re.match(patternDel, content):
 				listToDel = re.match(patternDel, content).group(1).split(',')
 				listToDel.remove('')
-				result = ArtsDel(listToDel)
+				result = ArtsDel(listToDel, actionUser)
 			elif re.match(patternSetTarget, content):
-				target = re.match(patternDel, content).group(1)
-				result = StatusSet(actionUser, target)
+				target = re.match(patternSetTarget, content).group(1)
+				result = TargetSet(actionUser, target)
 			elif re.match(patternGetTarget, content):
 				result = StatusGet(actionUser)
 			elif re.match(patternRandom, content):
-				count = re.match(patternAdd, content).group(1)
-				result = ArtsList(queryType="rand", int(count))
+				count = re.match(patternRandom, content).group(1)
+				result = ArtsList(queryType="rand", query=int(count))
 			else:
-				return "rule"
+				result = "rule"
+		return jsonify({"result":result})
 if __name__ == '__main__':
-	app.run()
+	port = int(os.getenv("PORT"))
+	app.run(host='0.0.0.0', port=port)

@@ -1,0 +1,14 @@
+---
+applications:
+- name: slack-arts
+  instances: 1
+  memory: 128MB
+  buildpack: https://github.com/cloudfoundry/buildpack-python.git
+  command: ./entrypoint-cf.sh
+
+  services:
+  - redis_data
+
+  env:
+    FLASK_APP: app.py
+    PROJECT_KEY: mntfun-arts
