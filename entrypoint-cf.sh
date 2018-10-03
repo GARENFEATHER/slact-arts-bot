@@ -14,4 +14,4 @@ export REDIS_HOST REDIS_PORT REDIS_PASSWORD
 echo "web port: ${PORT}"
 
 # Start
-flask run
+python app.py

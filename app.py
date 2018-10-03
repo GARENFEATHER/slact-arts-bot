@@ -6,6 +6,7 @@ GET, POST = "GET", "POST"
 projectKey = os.getenv("PROJECT_KEY")
 if not projectKey:
 	raise Exception('no project key detected!')
+projectToken = projectKey+"-token-slack"
 projectLatest = projectKey + "-latest"
 projectTotal = projectKey + "-total"
 patternListAll = "^<@.+> list all$"
@@ -121,7 +122,13 @@ def ArtsDel(listToDelete, user):
 app = Flask(__name__)
 @app.route('/', methods=[GET, POST])
 def hello():
-	return "hello slack arts bot"
+	if request.method == POST:
+		postData = request.get_json()
+		if postData["type"] == "url_verification":
+			r.set(projectToken, postData["token"])
+			return jsonify({"challenge":postData["challenge"]})
+	else:
+		return "hello slack arts bot"
 
 @app.route('/slack/app_mention', methods=[GET, POST])
 def mention():
@@ -129,6 +136,8 @@ def mention():
 		if not request.is_json:
 			return "not json error"
 		postData = request.get_json()
+		if postData["token"] != r.get(projectToken):
+			return jsonify({"error": "error token"})
 		actionUser = postData["event"]["user"]
 		if postData["event"]["type"] == "app_mention":
 			content = postData["event"]["text"]
