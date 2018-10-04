@@ -3,23 +3,19 @@ import os, re, redis, requests
 
 # Project Data
 GET, POST = "GET", "POST"
-projectKey = os.getenv("PROJECT_KEY")
+projectKey, projectName, projectOauth = os.getenv("PROJECT_KEY"), os.getenv("PROJECT_NAME"), os.getenv("TOKEN_SLACK")
 if not projectKey:
 	raise Exception('no project key detected!')
-projectName = os.getenv("PROJECT_NAME")
 if not projectName:
 	raise Exception('no project name detected!')
-projectOauth = os.getenv("TOKEN_SLACK")
 if not projectOauth:
 	raise Exception('no slack token detected!')
-projectToken = projectKey+"-token-slack"
-projectLatest = projectKey + "-latest"
-projectTotal = projectKey + "-total"
+projectRule, projectToken, projectLatest, projectTotal = "default rule", projectKey+"-token-slack", projectKey + "-latest", projectKey + "-total"
 patternListAll = "^<@.+> list all$"
-patternListOne = "^<@.+> list <@(.+)>$"
+patternListOne = "^<@.+> list <@(.+)> +$"
 patternLatest = "^<@.+> latest ([1-9])$"
-patternAdd = "^<@.+> add (http[s]*://.+,)+$"
-patternDel = "^<@.+> delete (http[s]*://.+,)$"
+patternAdd = "^<@.+> add\n((<http[s]*://.+>\n)+)$"
+patternDel = "^<@.+> delete\n((<http[s]*://.+>\n)+)$"
 patternSetTarget = "^<@.+> set target ([0-9]+)$"
 patternGetTarget = "^<@.+> get target$"
 patternRandom = "^<@.+> give me ([1-9])!*$"
@@ -44,10 +40,14 @@ if mark != testRes:
 	raise Exception("set test-global failed," + testRes + "/" + str(type(mark)) + str(type(testRes)))
 
 def GlobalProjectKeySet(projectId, ChannelId):
+	global projectKey
+	global projectToken
+	global projectLatest
+	global projectTotal
+	global projectName
+	global projectRule
 	projectKey = projectId + "-" + ChannelId
-	projectToken = projectKey+"-token-slack"
-	projectLatest = projectKey + "-latest"
-	projectTotal = projectKey + "-total"
+	projectToken, projectLatest, projectTotal = projectKey+"-token-slack", projectKey + "-latest", projectKey + "-total"
 	tmp = r.get("project-name-" + projectKey)
 	if tmp:
 		projectName = tmp
@@ -61,11 +61,12 @@ def GlobalProjectKeySet(projectId, ChannelId):
 			projectName = respData["channel"]["name"]
 		else:
 			projectName = "tmp"
-	projectRule = "1. list all " + projectName + ":@me list all\n2.list someone's "
-	projectRule += projectName + ":@me list @someone\n3.get latest added " + projectName
-	projectRule += ":@me latest <count, 1-9>\n4.set " + projectName
-	projectRule += " target:@me set target <count>\n5.get my target:@me get target\n6.random show " + projectName
-	projectRule += ":@me give me <count, 1-9>!\n7.add/delete my record for " + projectName + ":@me add/delete record1, record2,......"
+	lineSep = "------------------------------------------------"
+	projectRule = "1. list all " + projectName + "\n@me list all\n" + lineSep + "\n2. list someone's "
+	projectRule += projectName + "\n@me list @someone\n" + lineSep + "\n3. get latest added " + projectName
+	projectRule += "\n@me latest (count, 1-9)\n" + lineSep + "\n4. set " + projectName
+	projectRule += " target\n@me set target (count)\n" + lineSep + "\n5. get my target\n@me get target\n" + lineSep + "\n6. random show " + projectName
+	projectRule += "\n@me give me (count, 1-9)!\n" + lineSep + "\n7. add/delete my record for " + projectName + "\n@me add/delete\nrecord1\nrecord2\n..."
 
 # Process Method
 def ArtsList(queryType, query):
@@ -93,12 +94,12 @@ def ArtsList(queryType, query):
 	elif queryType == "user":
 		userArts = r.smembers(projectKey + "-" + query)
 		if len(userArts) != 0:
-			respStr = "arts you've added:\n"
+			respStr = projectName + " you've added:\n"
 			for arts in userArts:
 				respStr += arts + "\n"
 			return respStr
 		else:
-			return "you've never added your " + projectName + ", add one now!"
+			return "this guy has never added " + projectName + " !"
 
 def TargetSet(user, value):
 	result = r.set(projectKey + "-" + user + "-target", value)
@@ -157,10 +158,9 @@ def ArtsDel(listToDelete, user):
 
 def SendMessageToSlack(channelId, text):
 	message = {"channel":channelId, "text":text, "token":projectOauth}
-	print "message:",message
 	headers = {"Content-type": "application/json", "Authorization":"Bearer " + projectOauth}
 	resp = requests.post(url="https://slack.com/api/chat.postMessage", headers = headers, json = message)
-	print "resp from slack:", resp.text
+	print "resp from slack:", resp.json()["ok"]
 
 # App run
 app = Flask(__name__)
@@ -179,8 +179,8 @@ def mention():
 		actionUser = postData["event"]["user"]
 		GlobalProjectKeySet(postData["team_id"], postData["event"]["channel"])
 		if postData["event"]["type"] == "app_mention":
-			print "app mention get:", postData
 			content = postData["event"]["text"]
+			print "content: ", content
 			if re.match(patternListAll, content):
 				text = "wait..."
 			elif re.match(patternListOne, content):
@@ -190,11 +190,11 @@ def mention():
 				count = re.match(patternLatest, content).group(1)
 				text = ArtsList(queryType="latest", query=int(count))
 			elif re.match(patternAdd, content):
-				listToAdd = re.match(patternAdd, content).group(1).split(',')
+				listToAdd = re.match(patternAdd, content).group(1).split("\n")
 				listToAdd.remove('')
 				text = ArtsAdd(listToAdd, actionUser)
 			elif re.match(patternDel, content):
-				listToDel = re.match(patternDel, content).group(1).split(',')
+				listToDel = re.match(patternDel, content).group(1).split("\n")
 				listToDel.remove('')
 				text = ArtsDel(listToDel, actionUser)
 			elif re.match(patternSetTarget, content):
@@ -207,7 +207,6 @@ def mention():
 				text = ArtsList(queryType="rand", query=int(count))
 			else:
 				text = projectRule
-		print "test here:", text
 		SendMessageToSlack(postData["event"]["channel"], text)
 		return jsonify({"status":"ok"})
 if __name__ == '__main__':
