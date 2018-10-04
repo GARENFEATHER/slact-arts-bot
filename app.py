@@ -6,6 +6,12 @@ GET, POST = "GET", "POST"
 projectKey = os.getenv("PROJECT_KEY")
 if not projectKey:
 	raise Exception('no project key detected!')
+projectName = os.getenv("PROJECT_NAME")
+if not projectName:
+	raise Exception('no project name detected!')
+projectOauth = os.getenv("TOKEN_SLACK")
+if not projectOauth:
+	raise Exception('no slack token detected!')
 projectToken = projectKey+"-token-slack"
 projectLatest = projectKey + "-latest"
 projectTotal = projectKey + "-total"
@@ -37,10 +43,33 @@ mark = r.get(test)
 if mark != testRes:
 	raise Exception("set test-global failed," + testRes + "/" + str(type(mark)) + str(type(testRes)))
 
+def GlobalProjectKeySet(projectId, ChannelId):
+	projectKey = projectId + "-" + ChannelId
+	projectToken = projectKey+"-token-slack"
+	projectLatest = projectKey + "-latest"
+	projectTotal = projectKey + "-total"
+	tmp = r.get("project-name-" + projectKey)
+	if tmp:
+		projectName = tmp
+	else:
+		headers = {"Content-type": "application/json", "Authorization":"Bearer " + projectOauth}
+		resp = requests.get(url="https://slack.com/api/channels.info?channel="+ChannelId, headers=headers)
+		resp = jsonify(resp.text)
+		if resp["ok"] and resp["channel"]["is_channel"]:
+			r.set("project-name-" + projectKey, resp["channel"]["name"])
+			projectName = resp["channel"]["name"]
+		else:
+			projectName = "tmp"
+	projectRule = "1. list all " + projectName + ":@me list all\n2.list someone's "
+	projectRule += projectName + ":@me list @someone\n3.get latest added " + projectName
+	projectRule += ":@me latest <count, 1-9>\n4.set " + projectName
+	projectRule += " target:@me set target <count>\n5.get my target:@me get target\n6.random show " + projectName
+	projectRule += ":@me give me <count, 1-9>!\n7.add/delete my record for " + projectName + ":@me add/delete record1, record2,......"
+
 # Process Method
 def ArtsList(queryType, query):
 	if queryType == "rand":
-		totalGet, respStr = set(), "rand arts recommended for you:\n"
+		totalGet, respStr = set(), "rand " + projectName + " recommended for you:\n"
 		total = r.scard(projectTotal)
 		if total < query * 2:
 			query = total
@@ -54,9 +83,9 @@ def ArtsList(queryType, query):
 	elif queryType == "latest":
 		latest = r.lrange(projectLatest, query * -1, -1)
 		if len(latest) == 0:
-			return "sorry... no latest arts list now"
+			return "sorry... no latest " + projectName + " list now"
 		else:
-			respStr = "latest added arts here:\n"
+			respStr = "latest added " + projectName +" here:\n"
 			for i in range(len(latest)):
 				respStr += str(i) + ": " + latest[i] + "\n"
 			return respStr
@@ -68,10 +97,11 @@ def ArtsList(queryType, query):
 				respStr += arts + "\n"
 			return respStr
 		else:
-			return "you've never added your arts, add one now!"
+			return "you've never added your " + projectName + ", add one now!"
 
 def TargetSet(user, value):
 	result = r.set(projectKey + "-" + user + "-target", value)
+	print "r.set, key:" + projectKey + "-" + user + "-target, value:", value, 
 	if result:
 		return "target successfully set, new target:" + str(value)
 	else:
@@ -90,12 +120,16 @@ def ArtsAdd(listToAdd, user):
 	for url in listToAdd:
 		count = r.sadd(projectTotal, url)
 		if count != 0:
+			print "r.sadd, key:", projectTotal+", value:", url
 			totalAdded += 1
 			r.sadd(projectKey + "-" + user, url)
+			print "r.sadd, key:", projectKey + "-" + user + ", value:", url
 			r.rpush(projectLatest, url)
+			print "r.rpush, key:", projectLatest + ", value:", url
 			count = r.llen(projectLatest)
 			if count > 100:
 				r.lpop(projectLatest)
+				print "r.lpop, key:", projectLatest
 	if totalAdded == 0:
 		return "nothing has benn added ..."
 	elif totalAdded == 1:
@@ -110,13 +144,22 @@ def ArtsDel(listToDelete, user):
 		if count != 0:
 			totalDeleted += 1
 			r.srem(projectKey + "-" + user, url)
+			print "r.srem, key:", projectKey + "-" + user + ", value:", url
 			r.lrem(projectLatest, 0, url)
+			print "r.srem, key:", projectLatest + ", value:", url
 	if totalDeleted == 0:
 		return "nothing has benn deleted ..."
 	elif totalDeleted == 1:
 		return "congratulations! 1 post has been deleted!"
 	else:
 		return "congratulations! " + str(totalDeleted) + " posts have been deleted!"
+
+def SendMessageToSlack(channelId, text):
+	message = {"channel":channelId, "text":text, "token":projectOauth}
+	print "message:",message
+	headers = {"Content-type": "application/json", "Authorization":"Bearer " + projectOauth}
+	resp = requests.post(url="https://slack.com/api/chat.postMessage", headers = headers, json = message)
+	print "resp from slack:", resp.text
 
 # App run
 app = Flask(__name__)
@@ -136,6 +179,7 @@ def mention():
 		if postData["token"] != r.get(projectToken):
 			return jsonify({"error": "error token"})
 		actionUser = postData["event"]["user"]
+		GlobalProjectKeySet(postData["team_id"], postData["event"]["channel"])
 		if postData["event"]["type"] == "app_mention":
 			content = postData["event"]["text"]
 			if re.match(patternListAll, content):
@@ -163,11 +207,9 @@ def mention():
 				count = re.match(patternRandom, content).group(1)
 				text = ArtsList(queryType="rand", query=int(count))
 			else:
-				text = "rule"
-		message = jsonify({"channel":postData["event"]["channel"], "text":text, "token":postData["token"]})
-		headers = {"Content-type": "application/json", "Authorization":"Bearer "+postData["token"]}
-		requests.post(url="https://slack.com/api/chat.postMessage", headers = headers, json=message)
-		return message
+				text = projectRule
+		SendMessageToSlack(postData["event"]["channel"], text)
+		return jsonify({"status":"ok"})
 if __name__ == '__main__':
 	port = int(os.getenv("PORT"))
 	app.run(host='0.0.0.0', port=port)
