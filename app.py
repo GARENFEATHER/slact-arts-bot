@@ -54,10 +54,11 @@ def GlobalProjectKeySet(projectId, ChannelId):
 	else:
 		headers = {"Content-type": "application/json", "Authorization":"Bearer " + projectOauth}
 		resp = requests.get(url="https://slack.com/api/channels.info?channel="+ChannelId, headers=headers)
-		resp = jsonify(resp.text)
-		if resp["ok"] and resp["channel"]["is_channel"]:
-			r.set("project-name-" + projectKey, resp["channel"]["name"])
-			projectName = resp["channel"]["name"]
+		respData = resp.json()
+		print respData
+		if respData["ok"] and respData["channel"]["is_channel"]:
+			r.set("project-name-" + projectKey, respData["channel"]["name"])
+			projectName = respData["channel"]["name"]
 		else:
 			projectName = "tmp"
 	projectRule = "1. list all " + projectName + ":@me list all\n2.list someone's "
@@ -174,13 +175,11 @@ def mention():
 			return "not json error"
 		postData = request.get_json()
 		if postData["type"] == "url_verification":
-			r.set(projectToken, postData["token"])
 			return jsonify({"challenge":postData["challenge"]})
-		if postData["token"] != r.get(projectToken):
-			return jsonify({"error": "error token"})
 		actionUser = postData["event"]["user"]
 		GlobalProjectKeySet(postData["team_id"], postData["event"]["channel"])
 		if postData["event"]["type"] == "app_mention":
+			print "app mention get:", postData
 			content = postData["event"]["text"]
 			if re.match(patternListAll, content):
 				text = "wait..."
@@ -208,6 +207,7 @@ def mention():
 				text = ArtsList(queryType="rand", query=int(count))
 			else:
 				text = projectRule
+		print "test here:", text
 		SendMessageToSlack(postData["event"]["channel"], text)
 		return jsonify({"status":"ok"})
 if __name__ == '__main__':
